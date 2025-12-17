@@ -1,0 +1,26 @@
+{
+  "name": "idp-generator",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@google/generative-ai": "^0.24.1",
+    "html2pdf.js": "^0.12.1",
+    "next": "16.0.10",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "recharts": "^3.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "eslint": "^9",
+    "eslint-config-next": "16.0.10",
+    "tailwindcss": "^4"
+  }
+}
