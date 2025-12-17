@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { roles, competencies } from '@/lib/competencies';
-import { assessmentQuestions } from '@/lib/questions';
+import { getQuestionsForRole, calculateScores } from '@/lib/questions';
 
 // Functions list
 const functions = [
@@ -92,16 +92,22 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
   const [showDesignationDropdown, setShowDesignationDropdown] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
-  // Group questions by competency
+  // Get questions for the selected role
+  const assessmentQuestions = useMemo(() => {
+    return getQuestionsForRole(formData.currentRole);
+  }, [formData.currentRole]);
+
+  // Group questions by competency (only when role is selected)
   const questionsByCompetency = useMemo(() => {
+    if (!formData.currentRole) return [];
     return competencies.map(comp => ({
       ...comp,
       questions: assessmentQuestions.filter(q => q.competency === comp.id)
-    }));
-  }, []);
+    })).filter(comp => comp.questions.length > 0); // Only show competencies that have questions
+  }, [formData.currentRole, assessmentQuestions]);
 
   const currentCompetency = questionsByCompetency[currentCompetencyIndex];
-  const totalCompetencies = competencies.length;
+  const totalCompetencies = questionsByCompetency.length;
 
   // Filter designations based on search
   const filteredRoles = useMemo(() => {
@@ -112,7 +118,9 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
   }, [designationSearch]);
 
   // Calculate progress
-  const progressPercentage = ((currentCompetencyIndex) / totalCompetencies) * 100;
+  const progressPercentage = totalCompetencies > 0 
+    ? ((currentCompetencyIndex) / totalCompetencies) * 100 
+    : 0;
 
   // Check if all questions in current competency are answered
   const isCurrentCompetencyComplete = () => {
@@ -122,7 +130,7 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
 
   // Check if all questions are answered
   const isAllComplete = () => {
-    return assessmentQuestions.every(q => formData.answers[q.id]);
+    return assessmentQuestions.length > 0 && assessmentQuestions.every(q => formData.answers[q.id]);
   };
 
   // Handle option selection
@@ -162,9 +170,23 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
 
   // Handle designation selection
   const selectDesignation = (role) => {
-    setFormData(prev => ({ ...prev, currentRole: role.id }));
+    setFormData(prev => ({ 
+      ...prev, 
+      currentRole: role.id,
+      answers: {} // Reset answers when role changes
+    }));
     setDesignationSearch(role.label);
     setShowDesignationDropdown(false);
+  };
+
+  // Handle form submission with scores
+  const handleSubmit = () => {
+    const scores = calculateScores(formData.answers, formData.currentRole);
+    onSubmit({
+      ...formData,
+      scores,
+      questions: assessmentQuestions,
+    });
   };
 
   // Intro Screen
@@ -278,7 +300,7 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
                   setDesignationSearch(e.target.value);
                   setShowDesignationDropdown(true);
                   if (e.target.value.length < 2) {
-                    setFormData(prev => ({ ...prev, currentRole: '' }));
+                    setFormData(prev => ({ ...prev, currentRole: '', answers: {} }));
                   }
                 }}
                 onFocus={() => designationSearch.length >= 2 && setShowDesignationDropdown(true)}
@@ -319,6 +341,18 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
                 ))}
               </select>
             </div>
+
+            {/* Show selected role info */}
+            {formData.currentRole && (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <p className="text-blue-800 text-sm">
+                  <span className="font-semibold">Selected:</span> {roles.find(r => r.id === formData.currentRole)?.label}
+                </p>
+                <p className="text-blue-600 text-xs mt-1">
+                  {assessmentQuestions.length} questions will be tailored for your role
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="flex justify-between mt-8">
@@ -383,7 +417,7 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
             <div className="space-y-8">
               {currentCompetency?.questions.map((question, qIndex) => (
                 <div key={question.id} className="border-b border-gray-100 pb-8 last:border-0 last:pb-0">
-                  {/* Question */}
+                  {/* Question Header */}
                   <div className="flex items-start gap-4 mb-4">
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${formData.answers[question.id] ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>
                       {formData.answers[question.id] ? (
@@ -395,6 +429,11 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
                       )}
                     </div>
                     <div>
+                      {question.competencyBreakdown && (
+                        <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-full mb-2 inline-block">
+                          {question.competencyBreakdown}
+                        </span>
+                      )}
                       <p className="text-gray-800 font-medium leading-relaxed">{question.scenario}</p>
                     </div>
                   </div>
@@ -460,6 +499,7 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
     const answeredCount = Object.keys(formData.answers).length;
     const totalQuestions = assessmentQuestions.length;
     const allAnswered = answeredCount === totalQuestions;
+    const scores = calculateScores(formData.answers, formData.currentRole);
 
     return (
       <div className="max-w-2xl mx-auto">
@@ -474,24 +514,31 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
 
           <div className="p-8">
             {/* Summary Stats */}
-            <div className="grid grid-cols-2 gap-4 mb-8">
+            <div className="grid grid-cols-3 gap-4 mb-8">
               <div className="bg-gray-50 rounded-xl p-4 text-center">
                 <p className="text-3xl font-bold text-gray-800">{answeredCount}/{totalQuestions}</p>
-                <p className="text-sm text-gray-500">Questions Answered</p>
+                <p className="text-sm text-gray-500">Questions</p>
               </div>
               <div className="bg-gray-50 rounded-xl p-4 text-center">
                 <p className="text-3xl font-bold text-gray-800">{totalCompetencies}</p>
-                <p className="text-sm text-gray-500">Competencies Assessed</p>
+                <p className="text-sm text-gray-500">Competencies</p>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-4 text-center">
+                <p className="text-3xl font-bold text-blue-600">{scores.percentageScore}%</p>
+                <p className="text-sm text-gray-500">Score</p>
               </div>
             </div>
 
             {/* Competency Breakdown */}
             <div className="mb-8">
-              <h3 className="text-sm font-medium text-gray-500 mb-4">Competencies Covered</h3>
-              <div className="space-y-2">
+              <h3 className="text-sm font-medium text-gray-500 mb-4">Competency Scores</h3>
+              <div className="space-y-3">
                 {questionsByCompetency.map((comp, index) => {
                   const answeredForComp = comp.questions.filter(q => formData.answers[q.id]).length;
                   const isComplete = answeredForComp === comp.questions.length;
+                  const compScore = scores.competencyScores[comp.id] || 0;
+                  const scorePercentage = (compScore / 5) * 100;
+                  
                   return (
                     <button
                       key={comp.id}
@@ -499,12 +546,20 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
                         setCurrentCompetencyIndex(index);
                         setStep('assessment');
                       }}
-                      className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                      className="w-full p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors text-left"
                     >
-                      <span className="text-sm text-gray-700">{comp.name}</span>
-                      <span className={`text-sm font-medium ${isComplete ? 'text-green-600' : 'text-orange-500'}`}>
-                        {answeredForComp}/{comp.questions.length}
-                      </span>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-gray-700">{comp.name}</span>
+                        <span className={`text-sm font-medium ${isComplete ? 'text-green-600' : 'text-orange-500'}`}>
+                          {compScore.toFixed(1)}/5
+                        </span>
+                      </div>
+                      <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300"
+                          style={{ width: `${scorePercentage}%` }}
+                        />
+                      </div>
                     </button>
                   );
                 })}
@@ -522,7 +577,7 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
             <div className="flex gap-4">
               <button
                 onClick={() => {
-                  setCurrentCompetencyIndex(totalCompetencies - 1);
+                  setCurrentCompetencyIndex(0);
                   setStep('assessment');
                 }}
                 className="flex-1 py-4 border-2 border-gray-300 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-all"
@@ -530,7 +585,7 @@ export default function AssessmentForm({ onSubmit, isLoading }) {
                 ← Review Answers
               </button>
               <button
-                onClick={() => onSubmit(formData)}
+                onClick={handleSubmit}
                 disabled={isLoading || !allAnswered}
                 className="flex-1 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
