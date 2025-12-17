@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { generateIDP } from '@/lib/llm';
-import { competencies } from '@/lib/competencies';
-import { getQuestionsForRole, calculateScores } from '@/lib/questions';
+import { generateIDPAnalysis } from '@/lib/llm';
+import { calculateDetailedScores, getCompetencyRatings, identifyStrengthsAndWeaknesses } from '@/lib/scoring';
+import { getQuestionsForRole } from '@/lib/questions';
 
 export async function POST(request) {
   try {
@@ -14,60 +14,70 @@ export async function POST(request) {
       currentRole, 
       function: userFunction, 
       answers,
-      scores: clientScores,
-      questions: clientQuestions 
     } = body;
 
-    // Get questions for the role (server-side verification)
-    const questions = clientQuestions || getQuestionsForRole(currentRole);
-    
-    // Calculate scores (server-side verification)
-    const scores = clientScores || calculateScores(answers, currentRole);
+    // Get questions for the role
+    const questions = getQuestionsForRole(currentRole);
 
-    // Prepare user data for LLM
-    const userData = {
+    // STEP 1: Calculate all scores (deterministic)
+    const detailedScores = calculateDetailedScores(answers, questions);
+
+    // STEP 2: Get competency ratings (deterministic)
+    const competencyRatings = getCompetencyRatings(detailedScores);
+
+    // STEP 3: Identify strengths/weaknesses (deterministic)
+    const strengthsWeaknesses = identifyStrengthsAndWeaknesses(detailedScores);
+
+    // STEP 4: Generate qualitative analysis (LLM)
+    const llmAnalysis = await generateIDPAnalysis({
       name,
-      employeeId,
-      email,
       currentRole,
       function: userFunction,
-      answers,
-      scores,
-      questions,
-      competencies,
-    };
+      competencyRatings,
+      strengthsWeaknesses,
+      overallRating: detailedScores.overall,
+    });
 
-    // Generate IDP using Claude
-    const idpResult = await generateIDP(userData);
-
-    // Add metadata to response
-    const response = {
-      ...idpResult,
-      metadata: {
-        employeeName: name,
+    // Final report structure matching your template
+    const report = {
+      // Employee Info
+      employee: {
+        name,
         employeeId,
         email,
         role: currentRole,
         function: userFunction,
-        assessmentDate: new Date().toISOString(),
-        totalQuestions: questions.length,
-        questionsAnswered: Object.keys(answers).length,
-        rawScores: scores,
-      }
+      },
+      
+      // Overall Rating (star rating out of 5)
+      overallRating: parseFloat(detailedScores.overall.starRating.toFixed(1)),
+      
+      // Competency Wise Rating (4 competencies with average scores)
+      competencyRatings: competencyRatings,
+      
+      // SWOT Analysis
+      swotAnalysis: llmAnalysis.swot_analysis,
+      
+      // Manager's Feedback
+      managersFeedback: llmAnalysis.managers_feedback,
+      
+      // On The Job Projects
+      onTheJobProjects: llmAnalysis.on_the_job_projects,
+      
+      // Self Learning
+      selfLearning: llmAnalysis.self_learning,
+      
+      // Metadata
+      generatedAt: new Date().toISOString(),
     };
 
-    return NextResponse.json({ success: true, data: response });
+    return NextResponse.json({ success: true, data: report });
 
   } catch (error) {
     console.error('Error generating IDP:', error);
     
-    // More detailed error response
     return NextResponse.json(
-      { 
-        success: false, 
-        error: error.message,
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { success: false, error: error.message },
       { status: 500 }
     );
   }
